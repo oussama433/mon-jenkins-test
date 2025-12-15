@@ -25,34 +25,35 @@ pipeline {
             steps {
                 echo '🔨 Construction du projet avec Maven...'
                 sh './mvnw clean package -DskipTests'
+                echo '✅ Build Maven réussi!'
             }
         }
         
-        stage('Build Docker Image') {
+        stage('Simuler Build Docker') {
             steps {
-                script {
-                    echo '🐳 Construction de l\'image Docker...'
-                    dockerImage = docker.build("${DOCKER_IMAGE}:${BUILD_NUMBER}")
-                }
+                echo '🐳 [SIMULATION] Construction de l\'image Docker...'
+                echo 'Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}'
+                echo '✅ Étape Docker simulée (Docker à configurer sur Jenkins)'
             }
         }
         
-        stage('Push to Docker Hub') {
+        stage('Simuler Push Docker Hub') {
             steps {
-                script {
-                    echo '📤 Pushing image to Docker Hub...'
-                    docker.withRegistry('https://index.docker.io/v1/', 'docker-hub-cred') {
-                        dockerImage.push("${BUILD_NUMBER}")
-                        dockerImage.push("latest")
-                    }
-                }
+                echo '📤 [SIMULATION] Pushing image to Docker Hub...'
+                echo '✅ Push simulé vers Docker Hub'
+                echo 'Pour un vrai déploiement:'
+                echo '1. Installer Docker sur le nœud Jenkins'
+                echo '2. Installer le plugin Docker Pipeline'
+                echo '3. Configurer les credentials Docker'
             }
         }
     }
     
     post {
         success {
-            echo '🎉 Pipeline student-project exécuté avec succès!'
+            echo '🎉 Pipeline exécuté avec succès!'
+            echo '✅ Maven Build: COMPLET'
+            echo '⚠️  Docker Steps: SIMULÉES (à configurer)'
         }
     }
 }
