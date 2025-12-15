@@ -1,0 +1,58 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
+        DOCKER_IMAGE = 'oussama433/student-project'  # ← Changé ici
+    }
+    
+    stages {
+        stage('Checkout from GitHub') {
+            steps {
+                echo '📥 Récupération du code depuis GitHub...'
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/oussama433/mon-jenkins-test.git',
+                        credentialsId: 'github-cred'
+                    ]]
+                ])
+            }
+        }
+        
+        stage('Build with Maven') {
+            steps {
+                echo '🔨 Construction du projet avec Maven...'
+                sh './mvnw clean package -DskipTests'
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    echo '🐳 Construction de l\'image Docker...'
+                    dockerImage = docker.build("${DOCKER_IMAGE}:${BUILD_NUMBER}")
+                }
+            }
+        }
+        
+        stage('Push to Docker Hub') {
+            steps {
+                script {
+                    echo '📤 Pushing image to Docker Hub...'
+                    docker.withRegistry('https://index.docker.io/v1/', 'docker-hub-cred') {
+                        dockerImage.push("${BUILD_NUMBER}")
+                        dockerImage.push("latest")
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '🎉 Pipeline student-project exécuté avec succès!'
+        }
+    }
+}
