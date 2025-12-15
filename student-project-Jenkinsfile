@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
-        DOCKER_IMAGE = 'oussama433/student-project'  # ← Changé ici
+        DOCKER_IMAGE = 'oussama433/student-project'
     }
     
     stages {
