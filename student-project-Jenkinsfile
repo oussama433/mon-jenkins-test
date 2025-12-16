@@ -1,58 +1,379 @@
 pipeline {
     agent any
     
+    environment {
+        DOCKER_IMAGE = 'oussama433/student-project'
+        SCANNER_HOME = tool 'sonar-scanner'
+        SONAR_HOST_URL = 'http://192.168.33.10:9000'
+        
+        // Configuration Kubernetes
+        K8S_NAMESPACE = "student-namespace-${BUILD_NUMBER}"
+        APP_NAME = "student-app-${BUILD_NUMBER}"
+        DOCKER_REGISTRY = "docker.io"
+    }
+    
     stages {
-        stage('Test K8s Permissions') {
+        stage('Checkout & Setup') {
             steps {
-                echo "🔧 Test des permissions Kubernetes..."
+                echo '🚀 Démarrage du pipeline CI/CD avec Kubernetes'
+                checkout scm
+                echo "✅ Build #${BUILD_NUMBER}"
+                echo "📦 Namespace: ${K8S_NAMESPACE}"
+                echo "🐳 Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+            }
+        }
+        
+        stage('Build with Maven') {
+            steps {
+                echo '🔨 Construction du projet avec Maven...'
+                sh './mvnw clean package -DskipTests'
+                echo '✅ Build Maven réussi!'
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            steps {
+                echo '🔍 Analyse de la qualité du code avec SonarQube...'
+                
+                withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                    sh """
+                        ${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectKey=student-project-jenkins-${BUILD_NUMBER} \
+                        -Dsonar.projectName='Student Project' \
+                        -Dsonar.sources=src \
+                        -Dsonar.java.binaries=target/classes \
+                        -Dsonar.host.url=${SONAR_HOST_URL} \
+                        -Dsonar.token=${SONAR_TOKEN}
+                    """
+                }
+                echo '✅ Analyse SonarQube soumise !'
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                echo '🐳 Construction de l\'image Docker...'
+                
+                sh '''
+                    # Créer un Dockerfile optimisé
+                    cat > Dockerfile << DOCKERFILE
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+COPY target/*.jar app.jar
+RUN addgroup -S spring && adduser -S spring -G spring
+USER spring:spring
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app.jar"]
+DOCKERFILE
+                    
+                    echo "📄 Dockerfile créé:"
+                    cat Dockerfile
+                '''
+                
+                withCredentials([usernamePassword(
+                    credentialsId: 'docker-hub-cred',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh """
+                        # Build de l'image
+                        docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
+                        
+                        # Push vers Docker Hub (optionnel)
+                        echo "🔐 Authentification Docker Hub..."
+                        echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin || echo "⚠️  Auth échouée"
+                        
+                        echo "📤 Push de l'image..."
+                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER} || echo "⚠️  Push échoué - continuer sans"
+                        
+                        echo "✅ Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+                    """
+                }
+            }
+        }
+        
+        stage('Kubernetes Setup') {
+            steps {
+                echo '☸️  Configuration Kubernetes...'
                 
                 script {
-                    // Méthode 1: Utiliser le chemin direct
-                    sh '''
-                        echo "=== Méthode 1: /snap/bin/microk8s.kubectl ==="
-                        /snap/bin/microk8s.kubectl get nodes || echo "❌ Échec méthode 1"
+                    // Vérifier que kubectl fonctionne
+                    def k8sCheck = sh(
+                        script: 'kubectl cluster-info || echo "K8S_NOT_READY"',
+                        returnStdout: true
+                    ).trim()
+                    
+                    if (k8sCheck.contains("K8S_NOT_READY")) {
+                        echo "⚠️  Kubernetes non disponible - utilisation de MicroK8s"
+                        sh '''
+                            # Vérifier MicroK8s
+                            microk8s status || echo "MicroK8s non démarré"
+                            # Utiliser le kubectl de MicroK8s
+                            sudo snap alias microk8s.kubectl kubectl || true
+                        '''
+                    }
+                    
+                    // Créer le namespace
+                    sh """
+                        echo "📁 Création du namespace ${K8S_NAMESPACE}..."
+                        kubectl create namespace ${K8S_NAMESPACE} || echo "Namespace existe déjà"
+                        
+                        echo "📊 Cluster info:"
+                        kubectl cluster-info
                         echo ""
-                        
-                        echo "=== Méthode 2: kubectl standard ==="
-                        kubectl get nodes || echo "❌ Échec méthode 2"
+                        echo "📦 Nodes:"
+                        kubectl get nodes
                         echo ""
-                        
-                        echo "=== Test création namespace ==="
-                        /snap/bin/microk8s.kubectl create namespace jenkins-test-${BUILD_NUMBER} || echo "Namespace existe déjà"
-                        /snap/bin/microk8s.kubectl get namespaces | grep jenkins-test
-                        echo ""
-                        
-                        echo "=== Test déploiement simple ==="
-                        cat > test-pod.yaml <<YAML
-apiVersion: v1
-kind: Pod
-metadata:
-  name: test-pod-${BUILD_NUMBER}
-  namespace: jenkins-test-${BUILD_NUMBER}
-spec:
-  containers:
-  - name: nginx
-    image: nginx:alpine
-    ports:
-    - containerPort: 80
-YAML
-                        
-                        /snap/bin/microk8s.kubectl apply -f test-pod.yaml || echo "❌ Échec déploiement"
-                        sleep 5
-                        /snap/bin/microk8s.kubectl get pods -n jenkins-test-${BUILD_NUMBER}
-                        
-                        # Nettoyage
-                        /snap/bin/microk8s.kubectl delete namespace jenkins-test-${BUILD_NUMBER} || true
-                    '''
+                        echo "🏷️  Namespaces:"
+                        kubectl get namespaces
+                    """
                 }
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                echo '🚀 Déploiement sur Kubernetes...'
+                
+                sh """
+                    # Créer les manifests Kubernetes
+                    cat > k8s-deployment.yaml <<MANIFEST
+---
+# Configuration de l'application
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${APP_NAME}-config
+  namespace: ${K8S_NAMESPACE}
+data:
+  APP_NAME: "Student Application"
+  VERSION: "${BUILD_NUMBER}"
+---
+# Déploiement principal
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${APP_NAME}
+  namespace: ${K8S_NAMESPACE}
+  labels:
+    app: student-app
+    version: "${BUILD_NUMBER}"
+    managed-by: jenkins
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: student-app
+      version: "${BUILD_NUMBER}"
+  template:
+    metadata:
+      labels:
+        app: student-app
+        version: "${BUILD_NUMBER}"
+    spec:
+      containers:
+      - name: app
+        image: ${DOCKER_IMAGE}:${BUILD_NUMBER}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: SPRING_APPLICATION_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: ${APP_NAME}-config
+              key: APP_NAME
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 45
+          periodSeconds: 15
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${APP_NAME}-service
+  namespace: ${K8S_NAMESPACE}
+spec:
+  selector:
+    app: student-app
+    version: "${BUILD_NUMBER}"
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  type: ClusterIP
+---
+# Ingress (si ingress controller est activé)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${APP_NAME}-ingress
+  namespace: ${K8S_NAMESPACE}
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ${APP_NAME}-service
+            port:
+              number: 80
+MANIFEST
+
+                    echo "📄 Manifest créé: k8s-deployment.yaml"
+                    echo ""
+                    echo "🔧 Application du manifest..."
+                    kubectl apply -f k8s-deployment.yaml
+                    
+                    echo ""
+                    echo "⏳ Attente du démarrage des pods..."
+                    sleep 20
+                    
+                    echo ""
+                    echo "📊 ÉTAT DU DÉPLOIEMENT:"
+                    kubectl get all -n ${K8S_NAMESPACE}
+                    
+                    echo ""
+                    echo "📜 LOGS DES PODS:"
+                    kubectl get pods -n ${K8S_NAMESPACE} -o wide
+                    
+                    echo ""
+                    echo "🔍 DÉTAILS:"
+                    kubectl describe deployment ${APP_NAME} -n ${K8S_NAMESPACE} | head -50
+                """
+            }
+        }
+        
+        stage('Verify Deployment') {
+            steps {
+                echo '✅ Vérification du déploiement...'
+                
+                sh """
+                    echo "🔄 Vérification de l'état des pods..."
+                    
+                    # Attendre que les pods soient prêts
+                    for i in {1..10}; do
+                        READY_PODS=\$(kubectl get deployment ${APP_NAME} -n ${K8S_NAMESPACE} -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+                        DESIRED_PODS=\$(kubectl get deployment ${APP_NAME} -n ${K8S_NAMESPACE} -o jsonpath='{.status.replicas}' 2>/dev/null || echo "0")
+                        
+                        if [ "\$READY_PODS" = "\$DESIRED_PODS" ] && [ "\$READY_PODS" != "0" ]; then
+                            echo "✅ Tous les pods sont prêts (\$READY_PODS/\$DESIRED_PODS)"
+                            break
+                        fi
+                        
+                        echo "⏳ Pods prêts: \$READY_PODS/\$DESIRED_PODS (attente...)"
+                        sleep 10
+                    done
+                    
+                    echo ""
+                    echo "🌐 ACCÈS À L'APPLICATION:"
+                    echo ""
+                    
+                    # Méthode 1: Port-forward temporaire pour test
+                    echo "1. Port-forward (pour test):"
+                    echo "   kubectl port-forward service/${APP_NAME}-service -n ${K8S_NAMESPACE} 8080:80 &"
+                    echo "   curl http://localhost:8080/actuator/health"
+                    echo ""
+                    
+                    # Méthode 2: Via NodePort si service NodePort
+                    echo "2. Créer un service NodePort pour accès externe:"
+                    cat > nodeport-service.yaml <<NODEPORT
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${APP_NAME}-nodeport
+  namespace: ${K8S_NAMESPACE}
+spec:
+  selector:
+    app: student-app
+    version: "${BUILD_NUMBER}"
+  ports:
+  - port: 80
+    targetPort: 8080
+    nodePort: 3${BUILD_NUMBER}
+  type: NodePort
+NODEPORT
+                    
+                    echo "   kubectl apply -f nodeport-service.yaml"
+                    echo "   Accès: http://<IP_VM>:3${BUILD_NUMBER}"
+                    echo ""
+                    
+                    # Méthode 3: Via Ingress
+                    echo "3. Via Ingress (si activé):"
+                    echo "   kubectl get ingress -n ${K8S_NAMESPACE}"
+                    echo ""
+                    
+                    echo "🔧 COMMANDES UTILES:"
+                    echo "   kubectl logs -f deployment/${APP_NAME} -n ${K8S_NAMESPACE}"
+                    echo "   kubectl exec -it \$(kubectl get pods -n ${K8S_NAMESPACE} -l app=student-app -o name | head -1) -- /bin/sh"
+                    echo "   kubectl delete namespace ${K8S_NAMESPACE}  # Pour nettoyer"
+                """
             }
         }
     }
     
     post {
-        always {
-            echo "📊 Résumé du test de permissions"
-            echo "Si tout est vert, ton pipeline Kubernetes fonctionnera !"
+        success {
+            echo '🎉🎉🎉 DÉPLOIEMENT KUBERNETES RÉUSSI ! 🎉🎉🎉'
+            echo '============================================='
+            echo ''
+            echo '📋 RÉSUMÉ:'
+            echo "   Build #: ${BUILD_NUMBER}"
+            echo "   Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+            echo "   Namespace: ${K8S_NAMESPACE}"
+            echo "   Déploiement: ${APP_NAME}"
+            echo "   Réplicas: 2"
+            echo ''
+            echo '🔗 LIENS:'
+            echo "   - 📊 SonarQube: http://192.168.33.10:9000/dashboard?id=student-project-jenkins-${BUILD_NUMBER}"
+            echo "   - 🐳 Docker Hub: https://hub.docker.com/r/oussama433/student-project/tags"
+            echo ''
+            echo '🛠️  KUBERNETES COMMANDS:'
+            echo "   kubectl get all -n ${K8S_NAMESPACE}"
+            echo "   kubectl logs -f deployment/${APP_NAME} -n ${K8S_NAMESPACE}"
+            echo "   kubectl describe deployment ${APP_NAME} -n ${K8S_NAMESPACE}"
+            echo ''
+            echo '🌐 POUR ACCÉDER À L\'APP:'
+            echo '   1. kubectl port-forward service/${APP_NAME}-service -n ${K8S_NAMESPACE} 8080:80'
+            echo '   2. Ouvrir: http://localhost:8080'
+        }
+        failure {
+            echo '❌ Déploiement échoué.'
+            echo '🔧 Debug Kubernetes:'
+            echo '   kubectl get events -n ${K8S_NAMESPACE}'
+            echo '   kubectl describe pods -n ${K8S_NAMESPACE}'
+        }
+        cleanup {
+            echo '🧹 Nettoyage...'
+            sh '''
+                # Nettoyer les fichiers temporaires
+                rm -f k8s-deployment.yaml nodeport-service.yaml || true
+                # Nettoyer Docker
+                docker system prune -f || true
+            '''
         }
     }
 }
