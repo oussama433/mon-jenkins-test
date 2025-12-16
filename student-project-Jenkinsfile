@@ -4,6 +4,7 @@ pipeline {
     environment {
         DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
         DOCKER_IMAGE = 'oussama433/student-project'
+        SCANNER_HOME = tool 'sonar-scanner'
     }
     
     stages {
@@ -26,6 +27,32 @@ pipeline {
                 echo '🔨 Construction du projet avec Maven...'
                 sh './mvnw clean package -DskipTests'
                 echo '✅ Build Maven réussi!'
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            steps {
+                echo '🔍 Analyse de la qualité du code avec SonarQube...'
+                withSonarQubeEnv('SonarQube-Server') {
+                    sh """
+                        ${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectKey=student-project-jenkins \
+                        -Dsonar.projectName='Student Project' \
+                        -Dsonar.sources=src \
+                        -Dsonar.java.binaries=target/classes
+                    """
+                }
+                echo '✅ Analyse SonarQube soumise !'
+            }
+        }
+        
+        stage('Quality Gate') {
+            steps {
+                echo '⏳ Attente du résultat de la Quality Gate...'
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+                echo '✅ Quality Gate passée !'
             }
         }
         
@@ -53,7 +80,11 @@ pipeline {
         success {
             echo '🎉 Pipeline exécuté avec succès!'
             echo '✅ Maven Build: COMPLET'
+            echo '✅ SonarQube Analysis: COMPLET'
             echo '⚠️  Docker Steps: SIMULÉES (à configurer)'
+        }
+        failure {
+            echo '❌ Pipeline a échoué.'
         }
     }
 }
