@@ -34,7 +34,7 @@ pipeline {
             steps {
                 script {
                     echo '🔍 Analyse de la qualité du code avec SonarQube...'
-                    withSonarQubeEnv('SonarQube') {
+                    withSonarQubeEnv('SonarQube-Server') {
                         sh """
                             ${SCANNER_HOME}/bin/sonar-scanner \
                             -Dsonar.projectKey=student-project-jenkins \
@@ -52,7 +52,7 @@ pipeline {
             steps {
                 script {
                     echo '⏳ Attente du résultat de la Quality Gate...'
-                    withSonarQubeEnv('SonarQube') {
+                    withSonarQubeEnv('SonarQube-Server') {
                         timeout(time: 5, unit: 'MINUTES') {
                             def qg = waitForQualityGate abortPipeline: true
                             echo "🎯 Quality Gate status: ${qg.status}"
