@@ -2,9 +2,11 @@ pipeline {
     agent any
     
     environment {
+        // IDs UNIQUES pour chaque credential
         DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
         DOCKER_IMAGE = 'oussama433/student-project'
         SCANNER_HOME = tool 'sonar-scanner'
+        GITHUB_CREDS = credentials('github-cred')
     }
     
     stages {
@@ -16,7 +18,7 @@ pipeline {
                     branches: [[name: '*/main']],
                     userRemoteConfigs: [[
                         url: 'https://github.com/oussama433/mon-jenkins-test.git',
-                        credentialsId: 'github-cred'
+                        credentialsId: 'github-cred'  // MÊME ID que ci-dessus
                     ]]
                 ])
             }
@@ -32,60 +34,80 @@ pipeline {
         
         stage('SonarQube Analysis') {
             steps {
-                script {
-                    echo '🔍 Analyse de la qualité du code avec SonarQube...'
-                    withSonarQubeEnv('SonarQube-Server') {
-                        sh """
-                            ${SCANNER_HOME}/bin/sonar-scanner \
-                            -Dsonar.projectKey=student-project-jenkins \
-                            -Dsonar.projectName='Student Project' \
-                            -Dsonar.sources=src \
-                            -Dsonar.java.binaries=target/classes
-                        """
-                    }
-                    echo '✅ Analyse SonarQube soumise !'
+                echo '🔍 Analyse de la qualité du code avec SonarQube...'
+                
+                // OPTION 1: Avec withSonarQubeEnv (si vous avez créé SonarQube-Server)
+                withSonarQubeEnv('SonarQube-Server') {
+                    sh """
+                        ${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectKey=student-project-jenkins \
+                        -Dsonar.projectName='Student Project' \
+                        -Dsonar.sources=src \
+                        -Dsonar.java.binaries=target/classes
+                    """
                 }
+                
+                // OPTION 2: Avec token manuel (si vous avez créé sonarqube-token)
+                // withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                //     sh """
+                //         ${SCANNER_HOME}/bin/sonar-scanner \
+                //         -Dsonar.projectKey=student-project-jenkins \
+                //         -Dsonar.projectName='Student Project' \
+                //         -Dsonar.sources=src \
+                //         -Dsonar.java.binaries=target/classes \
+                //         -Dsonar.host.url=http://192.168.33.10:9000 \
+                //         -Dsonar.token=${SONAR_TOKEN}
+                //     """
+                // }
+                
+                echo '✅ Analyse SonarQube soumise !'
             }
         }
         
         stage('Quality Gate') {
             steps {
-                script {
-                    echo '⏳ Attente du résultat de la Quality Gate...'
-                    withSonarQubeEnv('SonarQube-Server') {
-                        timeout(time: 5, unit: 'MINUTES') {
-                            def qg = waitForQualityGate abortPipeline: true
-                            echo "🎯 Quality Gate status: ${qg.status}"
-                        }
+                echo '⏳ Attente du résultat de la Quality Gate...'
+                withSonarQubeEnv('SonarQube-Server') {
+                    timeout(time: 5, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
                     }
                 }
+                echo '✅ Quality Gate passée !'
             }
         }
         
         stage('Build Docker Image') {
             steps {
-                script {
-                    echo '🐳 Construction de l\'image Docker...'
+                echo '🐳 Construction de l\'image Docker...'
+                withCredentials([usernamePassword(
+                    credentialsId: 'docker-hub-cred',  // MÊME ID que ci-dessus
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
                     sh """
                         docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
                     """
-                    echo "✅ Image Docker construite : ${DOCKER_IMAGE}:${BUILD_NUMBER}"
                 }
+                echo '✅ Image Docker construite !'
             }
         }
         
         stage('Push Docker Hub') {
             steps {
-                script {
-                    echo '📤 Push de l\'image vers Docker Hub...'
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-cred', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
-                        sh """
-                            echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-                            docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                        """
-                    }
-                    echo '✅ Image Docker poussée sur Docker Hub'
+                echo '📤 Pushing image to Docker Hub...'
+                withCredentials([usernamePassword(
+                    credentialsId: 'docker-hub-cred',  // MÊME ID que ci-dessus
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh """
+                        echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin
+                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+                        docker push ${DOCKER_IMAGE}:latest
+                    """
                 }
+                echo '✅ Images poussées vers Docker Hub !'
             }
         }
     }
@@ -93,9 +115,20 @@ pipeline {
     post {
         success {
             echo '🎉 Pipeline exécuté avec succès!'
+            echo '📊 Étapes complétées:'
+            echo '   ✅ Checkout GitHub'
+            echo '   ✅ Build Maven'
+            echo '   ✅ Analyse SonarQube'
+            echo '   ✅ Quality Gate'
+            echo '   ✅ Build Docker'
+            echo '   ✅ Push Docker Hub'
         }
         failure {
             echo '❌ Pipeline a échoué.'
+            echo '🔍 Vérifiez:'
+            echo '   1. Les credentials existent dans Jenkins'
+            echo '   2. Les IDs sont corrects dans le Jenkinsfile'
+            echo '   3. SonarQube est accessible: http://192.168.33.10:9000'
         }
     }
 }
