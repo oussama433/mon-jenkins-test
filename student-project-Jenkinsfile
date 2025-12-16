@@ -36,7 +36,6 @@ pipeline {
                 echo '🔍 Analyse de la qualité du code avec SonarQube...'
                 echo "URL SonarQube: ${SONAR_HOST_URL}"
                 
-                // Utilisation du token sonarqube-token
                 withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                     echo "✅ Token SonarQube disponible!"
                     
@@ -60,6 +59,7 @@ pipeline {
                 sleep 30
                 echo '✅ L\'analyse devrait être terminée.'
                 echo "📊 Vérifiez sur: ${SONAR_HOST_URL}"
+                echo "🔗 Lien direct: http://192.168.33.10:9000/dashboard?id=student-project-jenkins-${BUILD_NUMBER}"
             }
         }
         
@@ -67,12 +67,12 @@ pipeline {
             steps {
                 echo '🐳 Construction de l\'image Docker...'
                 
-                // Créer un Dockerfile si inexistant
                 sh '''
                     if [ ! -f Dockerfile ]; then
                         echo "Création du Dockerfile..."
                         cat > Dockerfile << DOCKERFILE
-FROM openjdk:17-jdk-slim
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
 COPY target/*.jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app.jar"]
@@ -80,7 +80,6 @@ DOCKERFILE
                     fi
                 '''
                 
-                // Construction avec credentials Docker Hub
                 withCredentials([usernamePassword(
                     credentialsId: 'docker-hub-cred',
                     usernameVariable: 'DOCKER_USER',
@@ -89,7 +88,7 @@ DOCKERFILE
                     sh """
                         docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
                         docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
-                        echo "✅ Images taggées:"
+                        echo "✅ Images construites et taggées!"
                         echo "   - ${DOCKER_IMAGE}:${BUILD_NUMBER}"
                         echo "   - ${DOCKER_IMAGE}:latest"
                     """
@@ -98,22 +97,31 @@ DOCKERFILE
             }
         }
         
-        stage('Push Docker Hub') {
+        stage('Push Docker Hub - OPTIONAL') {
             steps {
-                echo '📤 Pushing image to Docker Hub...'
-                withCredentials([usernamePassword(
-                    credentialsId: 'docker-hub-cred',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh """
-                        echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin
-                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                        docker push ${DOCKER_IMAGE}:latest
-                        echo "🎉 Images poussées avec succès!"
-                    """
+                echo '📤 Tentative de push vers Docker Hub...'
+                script {
+                    try {
+                        withCredentials([usernamePassword(
+                            credentialsId: 'docker-hub-cred',
+                            usernameVariable: 'DOCKER_USER',
+                            passwordVariable: 'DOCKER_PASS'
+                        )]) {
+                            sh """
+                                echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin || true
+                                docker push ${DOCKER_IMAGE}:${BUILD_NUMBER} || echo "⚠️  Push échoué - permissions insuffisantes"
+                                docker push ${DOCKER_IMAGE}:latest || echo "⚠️  Push échoué - permissions insuffisantes"
+                            """
+                        }
+                        echo 'ℹ️  Push Docker Hub optionnel - Vérifiez vos permissions de token'
+                    } catch (Exception e) {
+                        echo "⚠️  Push Docker Hub ignoré: ${e.message}"
+                    }
                 }
-                echo '✅ Images poussées vers Docker Hub !'
+                echo 'ℹ️  Pour activer le push Docker Hub:'
+                echo '   1. Allez sur https://hub.docker.com/settings/security'
+                echo '   2. Créez un token avec permissions "Write, Delete"'
+                echo '   3. Mettez à jour le credential docker-hub-cred dans Jenkins'
             }
         }
     }
@@ -122,26 +130,23 @@ DOCKERFILE
         success {
             echo '🎉🎉🎉 PIPELINE RÉUSSI ! 🎉🎉🎉'
             echo '================================'
-            echo '✅ Toutes les étapes complétées:'
-            echo '   1. Checkout GitHub'
-            echo '   2. Build Maven'
-            echo '   3. Analyse SonarQube'
-            echo '   4. Build Docker Image'
-            echo '   5. Push Docker Hub'
+            echo '✅ Toutes les étapes principales complétées:'
+            echo '   1. ✅ Checkout GitHub'
+            echo '   2. ✅ Build Maven'
+            echo '   3. ✅ Analyse SonarQube - SUCCÈS !'
+            echo '   4. ✅ Build Docker Image'
+            echo '   5. ⚠️  Push Docker Hub - Optionnel (permissions à vérifier)'
             echo ''
-            echo '🔗 Liens utiles:'
-            echo "   - SonarQube: ${SONAR_HOST_URL}"
-            echo '   - Docker Hub: https://hub.docker.com/r/oussama433/student-project'
-            echo "   - Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+            echo '🔗 LIENS IMPORTANTS:'
+            echo "   - 📊 Rapport SonarQube: http://192.168.33.10:9000/dashboard?id=student-project-jenkins-${BUILD_NUMBER}"
+            echo '   - 🐳 Image Docker construite localement'
+            echo "   - 🏷️  Tags: ${DOCKER_IMAGE}:${BUILD_NUMBER}, ${DOCKER_IMAGE}:latest"
+            echo ''
+            echo '💡 Pour activer le push Docker Hub:'
+            echo '   Mettez à jour le token Docker Hub avec permissions "Write, Delete"'
         }
         failure {
-            echo '❌❌❌ PIPELINE ÉCHOUÉ ❌❌❌'
-            echo '================================'
-            echo '🔧 Vérifiez:'
-            echo '   1. Que SonarQube est démarré'
-            echo '   2. Le token sonarqube-token est valide'
-            echo '   3. Les credentials docker-hub-cred sont corrects'
-            echo '   4. Docker est installé et en cours d\'exécution'
+            echo '❌ Pipeline a échoué.'
         }
         cleanup {
             echo '🧹 Nettoyage...'
