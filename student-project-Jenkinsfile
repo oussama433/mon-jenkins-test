@@ -5,8 +5,7 @@ pipeline {
         DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
         DOCKER_IMAGE = 'oussama433/student-project'
         SCANNER_HOME = tool 'sonar-scanner'
-        // Définir explicitement les variables SonarQube
-        SONAR_HOST_URL = 'http://192.168.33.10:9000'
+        // Supprimer SONAR_HOST_URL manuel, on utilisera withSonarQubeEnv
         SONAR_TOKEN = credentials('sonarqube-token')
     }
     
@@ -36,19 +35,15 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 echo '🔍 Analyse de la qualité du code avec SonarQube...'
-                echo "URL: ${SONAR_HOST_URL}"
-                echo "Token disponible: ${SONAR_TOKEN != null ? 'OUI' : 'NON'}"
-                
-                // Utiliser les variables explicites SANS withSonarQubeEnv
-                sh """
-                    ${SCANNER_HOME}/bin/sonar-scanner \
-                    -Dsonar.projectKey=student-project-jenkins \
-                    -Dsonar.projectName='Student Project' \
-                    -Dsonar.sources=src \
-                    -Dsonar.java.binaries=target/classes \
-                    -Dsonar.host.url=${SONAR_HOST_URL} \
-                    -Dsonar.token=${SONAR_TOKEN}
-                """
+                withSonarQubeEnv('SonarQube') {
+                    sh """
+                        ${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectKey=student-project-jenkins \
+                        -Dsonar.projectName='Student Project' \
+                        -Dsonar.sources=src \
+                        -Dsonar.java.binaries=target/classes
+                    """
+                }
                 echo '✅ Analyse SonarQube soumise !'
             }
         }
@@ -56,13 +51,13 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 echo '⏳ Attente du résultat de la Quality Gate...'
-                // Pour waitForQualityGate, on utilise withSonarQubeEnv
-                withSonarQubeEnv('SonarQube-Server') {
+                // waitForQualityGate sécurisé
+                withSonarQubeEnv('SonarQube') {
                     timeout(time: 5, unit: 'MINUTES') {
-                        waitForQualityGate abortPipeline: true
+                        def qg = waitForQualityGate abortPipeline: true
+                        echo "🎯 Quality Gate status: ${qg.status}"
                     }
                 }
-                echo '✅ Quality Gate passée !'
             }
         }
         
@@ -85,17 +80,9 @@ pipeline {
     post {
         success {
             echo '🎉 Pipeline exécuté avec succès!'
-            echo '📊 Étapes complétées:'
-            echo '   ✅ Checkout GitHub'
-            echo '   ✅ Build Maven'
-            echo '   ✅ Analyse SonarQube'
-            echo '   ✅ Quality Gate'
         }
         failure {
             echo '❌ Pipeline a échoué.'
-            echo '🔍 Debug info:'
-            echo "   - SONAR_HOST_URL: ${SONAR_HOST_URL}"
-            echo "   - SONAR_TOKEN défini: ${SONAR_TOKEN != null ? 'OUI' : 'NON'}"
         }
     }
 }
