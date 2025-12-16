@@ -5,7 +5,9 @@ pipeline {
         DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
         DOCKER_IMAGE = 'oussama433/student-project'
         SCANNER_HOME = tool 'sonar-scanner'
-        // NE PAS définir SONAR_TOKEN ici
+        // Définir explicitement les variables SonarQube
+        SONAR_HOST_URL = 'http://192.168.33.10:9000'
+        SONAR_TOKEN = credentials('sonarqube-token')
     }
     
     stages {
@@ -34,16 +36,19 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 echo '🔍 Analyse de la qualité du code avec SonarQube...'
-                // withSonarQubeEnv injecte automatiquement SONAR_HOST_URL et SONAR_TOKEN
-                withSonarQubeEnv('SonarQube-Server') {
-                    sh """
-                        ${SCANNER_HOME}/bin/sonar-scanner \
-                        -Dsonar.projectKey=student-project-jenkins \
-                        -Dsonar.projectName='Student Project' \
-                        -Dsonar.sources=src \
-                        -Dsonar.java.binaries=target/classes
-                    """
-                }
+                echo "URL: ${SONAR_HOST_URL}"
+                echo "Token disponible: ${SONAR_TOKEN != null ? 'OUI' : 'NON'}"
+                
+                // Utiliser les variables explicites SANS withSonarQubeEnv
+                sh """
+                    ${SCANNER_HOME}/bin/sonar-scanner \
+                    -Dsonar.projectKey=student-project-jenkins \
+                    -Dsonar.projectName='Student Project' \
+                    -Dsonar.sources=src \
+                    -Dsonar.java.binaries=target/classes \
+                    -Dsonar.host.url=${SONAR_HOST_URL} \
+                    -Dsonar.token=${SONAR_TOKEN}
+                """
                 echo '✅ Analyse SonarQube soumise !'
             }
         }
@@ -51,8 +56,11 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 echo '⏳ Attente du résultat de la Quality Gate...'
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                // Pour waitForQualityGate, on utilise withSonarQubeEnv
+                withSonarQubeEnv('SonarQube-Server') {
+                    timeout(time: 5, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
+                    }
                 }
                 echo '✅ Quality Gate passée !'
             }
@@ -77,9 +85,17 @@ pipeline {
     post {
         success {
             echo '🎉 Pipeline exécuté avec succès!'
+            echo '📊 Étapes complétées:'
+            echo '   ✅ Checkout GitHub'
+            echo '   ✅ Build Maven'
+            echo '   ✅ Analyse SonarQube'
+            echo '   ✅ Quality Gate'
         }
         failure {
             echo '❌ Pipeline a échoué.'
+            echo '🔍 Debug info:'
+            echo "   - SONAR_HOST_URL: ${SONAR_HOST_URL}"
+            echo "   - SONAR_TOKEN défini: ${SONAR_TOKEN != null ? 'OUI' : 'NON'}"
         }
     }
 }
