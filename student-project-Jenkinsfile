@@ -4,6 +4,7 @@ pipeline {
     environment {
         DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
         DOCKER_IMAGE = 'oussama433/student-project'
+        SCANNER_HOME = tool 'sonar-scanner'
     }
     
     stages {
@@ -29,12 +30,29 @@ pipeline {
             }
         }
         
-        stage('SIMULATION SonarQube') {
+        stage('SonarQube Analysis') {
             steps {
-                echo '⚠️  SonarQube désactivé temporairement'
-                echo 'Configuration manquante dans Jenkins'
-                echo 'URL SonarQube: http://192.168.33.10:9000'
-                echo 'Token: sq_916c57dbb29b37d4e091e3036f07a36286318cf6'
+                echo '🔍 Analyse de la qualité du code avec SonarQube...'
+                withSonarQubeEnv('SonarQube-Server') {
+                    sh """
+                        ${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectKey=student-project-jenkins \
+                        -Dsonar.projectName='Student Project' \
+                        -Dsonar.sources=src \
+                        -Dsonar.java.binaries=target/classes
+                    """
+                }
+                echo '✅ Analyse SonarQube soumise !'
+            }
+        }
+        
+        stage('Quality Gate') {
+            steps {
+                echo '⏳ Attente du résultat de la Quality Gate...'
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+                echo '✅ Quality Gate passée !'
             }
         }
         
@@ -42,7 +60,7 @@ pipeline {
             steps {
                 echo '🐳 [SIMULATION] Construction de l\'image Docker...'
                 echo 'Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}'
-                echo '✅ Étape Docker simulée'
+                echo '✅ Étape Docker simulée (Docker à configurer sur Jenkins)'
             }
         }
         
@@ -57,12 +75,6 @@ pipeline {
     post {
         success {
             echo '🎉 Pipeline exécuté avec succès!'
-            echo '⚠️  IMPORTANT: Configurer SonarQube dans Jenkins:'
-            echo '   1. Manage Jenkins → Configure System'
-            echo '   2. Section "SonarQube servers"'
-            echo '   3. Name: SonarQube-Server'
-            echo '   4. URL: http://192.168.33.10:9000'
-            echo '   5. Token: sq_916c57dbb29b37d4e091e3036f07a36286318cf6'
         }
         failure {
             echo '❌ Pipeline a échoué.'
