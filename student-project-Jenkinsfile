@@ -32,27 +32,31 @@ pipeline {
         
         stage('SonarQube Analysis') {
             steps {
-                echo '🔍 Analyse de la qualité du code avec SonarQube...'
-                withSonarQubeEnv('SonarQube') {
-                    sh """
-                        ${SCANNER_HOME}/bin/sonar-scanner \
-                        -Dsonar.projectKey=student-project-jenkins \
-                        -Dsonar.projectName='Student Project' \
-                        -Dsonar.sources=src \
-                        -Dsonar.java.binaries=target/classes
-                    """
+                script {
+                    echo '🔍 Analyse de la qualité du code avec SonarQube...'
+                    withSonarQubeEnv('SonarQube') {
+                        sh """
+                            ${SCANNER_HOME}/bin/sonar-scanner \
+                            -Dsonar.projectKey=student-project-jenkins \
+                            -Dsonar.projectName='Student Project' \
+                            -Dsonar.sources=src \
+                            -Dsonar.java.binaries=target/classes
+                        """
+                    }
+                    echo '✅ Analyse SonarQube soumise !'
                 }
-                echo '✅ Analyse SonarQube soumise !'
             }
         }
         
         stage('Quality Gate') {
             steps {
-                echo '⏳ Attente du résultat de la Quality Gate...'
-                withSonarQubeEnv('SonarQube') {
-                    timeout(time: 5, unit: 'MINUTES') {
-                        def qg = waitForQualityGate abortPipeline: true
-                        echo "🎯 Quality Gate status: ${qg.status}"
+                script {
+                    echo '⏳ Attente du résultat de la Quality Gate...'
+                    withSonarQubeEnv('SonarQube') {
+                        timeout(time: 5, unit: 'MINUTES') {
+                            def qg = waitForQualityGate abortPipeline: true
+                            echo "🎯 Quality Gate status: ${qg.status}"
+                        }
                     }
                 }
             }
@@ -60,24 +64,28 @@ pipeline {
         
         stage('Build Docker Image') {
             steps {
-                echo '🐳 Construction de l\'image Docker...'
-                sh """
-                    docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
-                """
-                echo "✅ Image Docker construite : ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+                script {
+                    echo '🐳 Construction de l\'image Docker...'
+                    sh """
+                        docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                    """
+                    echo "✅ Image Docker construite : ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+                }
             }
         }
         
         stage('Push Docker Hub') {
             steps {
-                echo '📤 Push de l\'image vers Docker Hub...'
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-cred', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
-                    sh """
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                    """
+                script {
+                    echo '📤 Push de l\'image vers Docker Hub...'
+                    withCredentials([usernamePassword(credentialsId: 'docker-hub-cred', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
+                        sh """
+                            echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+                            docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+                        """
+                    }
+                    echo '✅ Image Docker poussée sur Docker Hub'
                 }
-                echo '✅ Image Docker poussée sur Docker Hub'
             }
         }
     }
