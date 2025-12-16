@@ -5,8 +5,6 @@ pipeline {
         DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
         DOCKER_IMAGE = 'oussama433/student-project'
         SCANNER_HOME = tool 'sonar-scanner'
-        // Supprimer SONAR_HOST_URL manuel, on utilisera withSonarQubeEnv
-        SONAR_TOKEN = credentials('sonarqube-token')
     }
     
     stages {
@@ -51,7 +49,6 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 echo '⏳ Attente du résultat de la Quality Gate...'
-                // waitForQualityGate sécurisé
                 withSonarQubeEnv('SonarQube') {
                     timeout(time: 5, unit: 'MINUTES') {
                         def qg = waitForQualityGate abortPipeline: true
@@ -61,18 +58,26 @@ pipeline {
             }
         }
         
-        stage('Simuler Build Docker') {
+        stage('Build Docker Image') {
             steps {
-                echo '🐳 [SIMULATION] Construction de l\'image Docker...'
-                echo "Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}"
-                echo '✅ Étape Docker simulée'
+                echo '🐳 Construction de l\'image Docker...'
+                sh """
+                    docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                """
+                echo "✅ Image Docker construite : ${DOCKER_IMAGE}:${BUILD_NUMBER}"
             }
         }
         
-        stage('Simuler Push Docker Hub') {
+        stage('Push Docker Hub') {
             steps {
-                echo '📤 [SIMULATION] Pushing image to Docker Hub...'
-                echo '✅ Push simulé vers Docker Hub'
+                echo '📤 Push de l\'image vers Docker Hub...'
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-cred', passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
+                    sh """
+                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
+                    """
+                }
+                echo '✅ Image Docker poussée sur Docker Hub'
             }
         }
     }
