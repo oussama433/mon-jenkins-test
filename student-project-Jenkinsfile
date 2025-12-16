@@ -5,8 +5,7 @@ pipeline {
         DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
         DOCKER_IMAGE = 'oussama433/student-project'
         SCANNER_HOME = tool 'sonar-scanner'
-        // 1. Récupérer le token depuis Jenkins (ID: sonarqube-token)
-        SONAR_TOKEN = credentials('sonarqube-token')
+        // NE PAS définir SONAR_TOKEN ici
     }
     
     stages {
@@ -35,18 +34,14 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 echo '🔍 Analyse de la qualité du code avec SonarQube...'
-                echo "Token ID utilisé: sonarqube-token"
-                // 2. withSonarQubeEnv injecte SONAR_HOST_URL automatiquement
+                // withSonarQubeEnv injecte automatiquement SONAR_HOST_URL et SONAR_TOKEN
                 withSonarQubeEnv('SonarQube-Server') {
-                    // 3. Passer EXPLICITEMENT le token avec -Dsonar.login
                     sh """
                         ${SCANNER_HOME}/bin/sonar-scanner \
                         -Dsonar.projectKey=student-project-jenkins \
                         -Dsonar.projectName='Student Project' \
                         -Dsonar.sources=src \
-                        -Dsonar.java.binaries=target/classes \
-                        -Dsonar.host.url=\${SONAR_HOST_URL} \
-                        -Dsonar.login=${SONAR_TOKEN}
+                        -Dsonar.java.binaries=target/classes
                     """
                 }
                 echo '✅ Analyse SonarQube soumise !'
@@ -56,7 +51,6 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 echo '⏳ Attente du résultat de la Quality Gate...'
-                // 4. Timeout pour éviter un blocage infini
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
@@ -68,7 +62,7 @@ pipeline {
             steps {
                 echo '🐳 [SIMULATION] Construction de l\'image Docker...'
                 echo "Image: ${DOCKER_IMAGE}:${BUILD_NUMBER}"
-                echo '✅ Étape Docker simulée (Docker à configurer sur Jenkins)'
+                echo '✅ Étape Docker simulée'
             }
         }
         
@@ -83,19 +77,9 @@ pipeline {
     post {
         success {
             echo '🎉 Pipeline exécuté avec succès!'
-            echo '📊 Toutes les étapes sont passées:'
-            echo '   ✅ Checkout GitHub'
-            echo '   ✅ Build Maven'
-            echo '   ✅ Analyse SonarQube'
-            echo '   ✅ Quality Gate'
-            echo '   ⚠️  Docker (simulation)'
         }
         failure {
             echo '❌ Pipeline a échoué.'
-            echo '🔧 Vérifiez:'
-            echo '   1. Token SonarQube dans Jenkins (ID: sonarqube-token)'
-            echo '   2. SonarQube accessible: http://192.168.33.10:9000'
-            echo '   3. Serveur SonarQube configuré dans Jenkins'
         }
     }
 }
