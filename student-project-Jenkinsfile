@@ -2,11 +2,8 @@ pipeline {
     agent any
     
     environment {
-        // IDs UNIQUES pour chaque credential
-        DOCKERHUB_CREDENTIALS = credentials('docker-hub-cred')
         DOCKER_IMAGE = 'oussama433/student-project'
         SCANNER_HOME = tool 'sonar-scanner'
-        GITHUB_CREDS = credentials('github-cred')
     }
     
     stages {
@@ -18,7 +15,7 @@ pipeline {
                     branches: [[name: '*/main']],
                     userRemoteConfigs: [[
                         url: 'https://github.com/oussama433/mon-jenkins-test.git',
-                        credentialsId: 'github-cred'  // MÊME ID que ci-dessus
+                        credentialsId: 'github-cred'
                     ]]
                 ])
             }
@@ -36,30 +33,16 @@ pipeline {
             steps {
                 echo '🔍 Analyse de la qualité du code avec SonarQube...'
                 
-                // OPTION 1: Avec withSonarQubeEnv (si vous avez créé SonarQube-Server)
+                // Méthode avec withSonarQubeEnv (utilise SonarQube-Server)
                 withSonarQubeEnv('SonarQube-Server') {
                     sh """
                         ${SCANNER_HOME}/bin/sonar-scanner \
-                        -Dsonar.projectKey=student-project-jenkins \
+                        -Dsonar.projectKey=student-project-jenkins-${BUILD_NUMBER} \
                         -Dsonar.projectName='Student Project' \
                         -Dsonar.sources=src \
                         -Dsonar.java.binaries=target/classes
                     """
                 }
-                
-                // OPTION 2: Avec token manuel (si vous avez créé sonarqube-token)
-                // withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
-                //     sh """
-                //         ${SCANNER_HOME}/bin/sonar-scanner \
-                //         -Dsonar.projectKey=student-project-jenkins \
-                //         -Dsonar.projectName='Student Project' \
-                //         -Dsonar.sources=src \
-                //         -Dsonar.java.binaries=target/classes \
-                //         -Dsonar.host.url=http://192.168.33.10:9000 \
-                //         -Dsonar.token=${SONAR_TOKEN}
-                //     """
-                // }
-                
                 echo '✅ Analyse SonarQube soumise !'
             }
         }
@@ -79,15 +62,40 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 echo '🐳 Construction de l\'image Docker...'
-                withCredentials([usernamePassword(
-                    credentialsId: 'docker-hub-cred',  // MÊME ID que ci-dessus
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh """
-                        docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
-                        docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
-                    """
+                script {
+                    // Vérifier si un Dockerfile existe
+                    if (fileExists('Dockerfile')) {
+                        withCredentials([usernamePassword(
+                            credentialsId: 'docker-hub-cred',
+                            usernameVariable: 'DOCKER_USER',
+                            passwordVariable: 'DOCKER_PASS'
+                        )]) {
+                            sh """
+                                docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                                docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
+                            """
+                        }
+                    } else {
+                        echo '⚠️  Aucun Dockerfile trouvé, création d\'un Dockerfile simple...'
+                        sh '''
+                            cat > Dockerfile << DOCKERFILE
+FROM openjdk:17-jdk-slim
+COPY target/*.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app.jar"]
+DOCKERFILE
+                        '''
+                        withCredentials([usernamePassword(
+                            credentialsId: 'docker-hub-cred',
+                            usernameVariable: 'DOCKER_USER',
+                            passwordVariable: 'DOCKER_PASS'
+                        )]) {
+                            sh """
+                                docker build -t ${DOCKER_IMAGE}:${BUILD_NUMBER} .
+                                docker tag ${DOCKER_IMAGE}:${BUILD_NUMBER} ${DOCKER_IMAGE}:latest
+                            """
+                        }
+                    }
                 }
                 echo '✅ Image Docker construite !'
             }
@@ -97,7 +105,7 @@ pipeline {
             steps {
                 echo '📤 Pushing image to Docker Hub...'
                 withCredentials([usernamePassword(
-                    credentialsId: 'docker-hub-cred',  // MÊME ID que ci-dessus
+                    credentialsId: 'docker-hub-cred',
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
@@ -105,6 +113,9 @@ pipeline {
                         echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin
                         docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
                         docker push ${DOCKER_IMAGE}:latest
+                        echo "🎉 Images disponibles sur Docker Hub:"
+                        echo "   - ${DOCKER_IMAGE}:${BUILD_NUMBER}"
+                        echo "   - ${DOCKER_IMAGE}:latest"
                     """
                 }
                 echo '✅ Images poussées vers Docker Hub !'
@@ -114,21 +125,35 @@ pipeline {
     
     post {
         success {
-            echo '🎉 Pipeline exécuté avec succès!'
-            echo '📊 Étapes complétées:'
-            echo '   ✅ Checkout GitHub'
-            echo '   ✅ Build Maven'
-            echo '   ✅ Analyse SonarQube'
-            echo '   ✅ Quality Gate'
-            echo '   ✅ Build Docker'
-            echo '   ✅ Push Docker Hub'
+            echo '🎉🎉🎉 PIPELINE RÉUSSI ! 🎉🎉🎉'
+            echo '================================'
+            echo 'Résumé:'
+            echo '1. ✅ Code récupéré depuis GitHub'
+            echo '2. ✅ Application construite avec Maven'
+            echo '3. ✅ Analyse qualité avec SonarQube'
+            echo '4. ✅ Quality Gate validée'
+            echo '5. ✅ Image Docker construite'
+            echo '6. ✅ Image publiée sur Docker Hub'
+            echo ''
+            echo '📊 Rapport SonarQube: http://192.168.33.10:9000'
+            echo '🐳 Image Docker: https://hub.docker.com/r/oussama433/student-project'
         }
         failure {
-            echo '❌ Pipeline a échoué.'
-            echo '🔍 Vérifiez:'
-            echo '   1. Les credentials existent dans Jenkins'
-            echo '   2. Les IDs sont corrects dans le Jenkinsfile'
-            echo '   3. SonarQube est accessible: http://192.168.33.10:9000'
+            echo '❌❌❌ PIPELINE ÉCHOUÉ ❌❌❌'
+            echo '================================'
+            echo 'Problèmes possibles:'
+            echo '1. ❌ Credentials manquants dans Jenkins'
+            echo '2. ❌ SonarQube inaccessible'
+            echo '3. ❌ Problème de build Maven'
+            echo '4. ❌ Échec de la Quality Gate'
+            echo '5. ❌ Erreur Docker'
+            echo ''
+            echo '🔧 Vérifiez les logs ci-dessus pour le détail.'
+        }
+        cleanup {
+            echo '🧹 Nettoyage de l\'espace de travail...'
+            // Nettoyer les images Docker intermédiaires
+            sh 'docker system prune -f || true'
         }
     }
 }
